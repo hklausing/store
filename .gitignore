@@ -1,0 +1,14 @@
+/blib/
+/.build/
+_build/
+cover_db/
+inc/
+Build
+!Build/
+.last_cover_stats
+/Makefile
+/Makefile.old
+/MANIFEST.bak
+/META.yml
+/META.json
+/MYMETA.*

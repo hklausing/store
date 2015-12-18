@@ -1,0 +1,51 @@
+store
+=====
+
+
+Directory/file list
+-------------------
+├── Build.PL
+├── Changes
+├── INSTALL
+├── lib/
+├── MANIFEST
+├── README
+├── script/
+│   └── store.pl*
+└── t/
+    ├── boilerplate.t
+    ├── manifest.t
+    ├── pod-coverage.t
+    └── pod.t
+
+
+
+Prepare project package
+-----------------------
+
+To create a installation package for the project 'store' execute
+the following steps on the terminal. It is helpful to do this on
+a new cloned git repository to be sure that all required files
+and directories committed.
+
+1.  $ perl Build.PL         -> warning possible; if no warning than continue with 4.
+2.  $ perl Build distmeta
+3.  $ perl Build.PL         -> required if step 1. gave warning
+4.  $ perl Build test
+5.  $ perl Build dist
+6.  $ sudo perl Build fakeinstall
+
+
+
+Install project package
+-----------------------
+
+Install package of project 'store' with tarball file. Do these steps:
+
+1.  $ tar -zxf store-<version>.tar.gz
+2.  $ cd store-<version>
+3.  $ perl Build.pl
+4.  $ perl Build
+5.  $ perl Build test
+6.  $ sudo perl Build install
+

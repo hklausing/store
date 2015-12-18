@@ -1,0 +1,25 @@
+NAME
+    store.pl - Backup and restore files and directories based on rsync-backup.
+
+DESCRIPTION
+
+SEE ALSO
+
+Author
+    Heiko Klausing
+
+    store.pl was designed by Heiko Klausing.
+
+VERSION
+    Current script version is 1.0.0
+
+BUGS
+    No bugs have been reported.
+
+COPYRIGHT AND LICENSE
+    Copyright (c) 2012, 2013 Heiko Klausing. All permissions reserved. This
+    program is free software; you can redistribute it and/or modify it under
+    the same terms as Perl itself.
+
+    Author can be reached at h dot klausing at gmx dot de
+
