@@ -16,7 +16,7 @@
 # - The external hard drive is identified by it's UUID. If the drive
 #   is not mounted this script will do it automatically for the backup
 #   process.
-# - Restore the current PC with data from the backuped data.
+# - Restore the current PC with data from the backup data.
 #
 #
 # Tidy:     -l=128 -pt=2 -sbt=2 -bt=2 -bbt=2 -csc -csci=28 -bbc -bbb -lbl=1 -sob -bar -nsfs -nolq -iscl -sbc -ce -anl -blbs=4
@@ -45,7 +45,7 @@ use Carp;
 use feature qw( state );
 use Getopt::Long;
 use File::Basename;
-use File::Path qw(remove_tree);
+use File::Path qw(remove_tree make_path);
 use Pod::Usage;
 use Sys::Hostname;
 #
@@ -55,6 +55,9 @@ use Sys::Hostname;
 my $VERSION     = '0.001';                        # major and minor releases, and sub-minor
 my $RELEASEDATE = '2015-12-13';
 my $SCRIPTNAME  = File::Basename::basename($0);
+my $SCRIPTDIR   = File::Basename::dirname($0);
+my $WORKINGDIR  = $ENV{'PWD'} // glob('~');
+# list of error/warnung IDs
 use constant {
     OK                     => 0,
     ERR_CONFFILE_NOT_FOUND => 1,
@@ -85,7 +88,7 @@ use constant {
 #
 #--- global variables --------------------------------------------------
 my $EMPTY = '';
-my %g_options = ('verbose' => 1);
+my %g_options = ('verbose' => 0);
 #
 #
 #
@@ -111,14 +114,13 @@ sub main {
     ############################################################################
     my $sts = OK;
     %g_options = (
-        'useall' => 0,
-
-        #'config'   => '/etc/store/backup.conf',
-        'config'  => './backup.conf',
-        'debug'   => 0,
+        'useall'  => 0,
+        'config'  => '/etc/store/backup.conf',
+        'dry-run' => 0,
         'select'  => undef,             # select UUID (first character will be compared)
         'verbose' => 1,                 # verbose level number
         'command' => 'backup',          # user selected command, default is backup.
+        'no-root' => 0,                 # =1 if script execution should be started without root permissions
     );
     Getopt::Long::Configure("bundling_override");
     my $result = Getopt::Long::GetOptions(
@@ -126,9 +128,10 @@ sub main {
         'c|config=s'  => \$g_options{'config'},
         'h|help'      => sub {helpSynopsis();},
         'man'         => sub {helpMan('man');},
-        'd|debug'     => \$g_options{'debug'},
+        'n|dry-run'   => \$g_options{'dry-run'},
+        'no-root'     => \$g_options{'no-root'},
         's|select=s'  => \$g_options{'select'},
-        'v|verbose=i' => \$g_options{'verbose'},
+        'v|verbose'   => sub{ $g_options{'verbose'}++; },
         'version'     => sub {version();},
     );
 
@@ -149,7 +152,7 @@ sub main {
         } elsif ('status' =~ /^$ARGV[0]/) {
             $g_options{'command'} = 'status';
         } else {
-            helpError("Command definition '$ARGV[0]' is unkown; supported are backup, restore!");
+            helpError("Command definition '$ARGV[0]' is unkown; supported are backup, restore, cleanup, status!");
         }
     } else {
         notify(2, "Default command '$g_options{'command'}' is used");
@@ -224,7 +227,6 @@ sub executeCommandModes {
         $sts = executeStatus();
     } else {
         error(ERR_COMMAND_UNKNOWN, "Command name '$command' is not supported.");
-#        exit ERR_COMMAND_UNKNOWN;
     }
     return $sts;
 } ## end sub executeCommandModes
@@ -245,14 +247,12 @@ sub executeBackup {
     # check if current user is root
     my $username = $ENV{'LOGNAME'} || $ENV{'USER'} || getpwuid($<);
 
-    if ($username !~ /^ root $ /smxi) {
-#        error("Current user '$username' has to be root to execute this script for backup.");
-#        $sts = ERR_USERPERMISSION;
-        return error(ERR_USER_PERMISSION, "Current user '$username' has no root permission to execute this script for backup.", CONTINUE);
+    if ($username !~ /^ root $/smx && $g_options{'no-root'} == 0) {
+        return warning(ERR_USER_PERMISSION, "User '$username' has no root permission to execute this script for backup.");
     }
 
     # check required tools
-    $sts = testRequiredTools();
+    $sts = checkRequiredToolsExisting();
     return $sts if $sts;    # stop execution if tool error was deteted
 
     # get configuration data
@@ -289,8 +289,8 @@ sub executeRestore {
     notify(3, "executeRestore()");
 
     # check required tools
-    $sts = testRequiredTools();
-    return $sts if $sts;    # stop execution if tool error was deteted
+    $sts = checkRequiredToolsExisting();
+    return $sts if $sts;    # stop execution if tool error was deleted
 
     # get configuration data
     my %config_data = ();
@@ -313,8 +313,8 @@ sub executeStatus {
     notify(3, "executeStatus()");
 
     # check required tools
-    $sts = testRequiredTools();
-    return $sts if $sts;    # stop execution if tool error was deteted
+    $sts = checkRequiredToolsExisting();
+    return $sts if $sts;    # stop execution if tool error was deleted
 
     # get configuration data
     my %config_data = ();
@@ -350,8 +350,8 @@ sub executeCleanup {
     notify(3, "executeCleanup()");
 
     # check required tools
-    $sts = testRequiredTools();
-    return $sts if $sts;    # stop execution if tool error was deteted
+    $sts = checkRequiredToolsExisting();
+    return $sts if $sts;    # stop execution if tool error was deleted
 
     # get configuration data
     my %config_data = ();
@@ -375,14 +375,14 @@ sub executeCleanup {
 
 
 
-sub testRequiredTools {
+sub checkRequiredToolsExisting {
     ############################################################################
-    # Test all required tools of accessablility.
+    # Test all required tools of accessibility.
     # Param1:   -
     # Return:   -
     ############################################################################
     my $sts = OK;
-    notify(3, "testRequiredTools()");
+    notify(3, "checkRequiredToolsExisting()");
     my %tool_list = (
         'awk'          => '',
         'blkid'        => '',
@@ -395,7 +395,7 @@ sub testRequiredTools {
         my $tool_name = $tool;    # simple example
         my $tool_path = '';
 
-        for my $path (split /:/, $ENV{PATH}) {
+        for my $path (split /:/, $ENV{'PATH'}) {
             my $progpath = "$path/$tool_name";
             notify(3, "Search '$progpath'");
 
@@ -408,19 +408,18 @@ sub testRequiredTools {
 
         if ($tool_path eq '') {
             $sts = error(ERR_PROG_NOT_FOUND, "Required tool '$tool' not found!\n$tool_list{$tool}", CONTINUE);
-#            $sts = ERR_PROG_NOT_FOUND;
         }
     }
-    notify(3, "testRequiredTools() finished");
+    notify(3, "checkRequiredToolsExisting() finished");
     return $sts;
-} ## end sub testRequiredTools
+} ## end sub checkRequiredToolsExisting
 
 
 
 
 sub readConfigData {
     ############################################################################
-    # Read the data of the addresed configuration file as a hash data list.
+    # Read the data of the addressed configuration file as a hash data list.
     # Param1:   reference to a result configuration data hash.
     # Return:   -
     ############################################################################
@@ -434,14 +433,12 @@ sub readConfigData {
     foreach my $key (qw(UUIDs select backupat rootdir)) {
 
         if (!defined($config_data_ref->{$key})) {
-#            error("Missing key name '$key' in config file!");
             $sts = error(ERR_MISSING_KEY, "Missing key name '$key' in config file!", CONTINUE);
         } else {
             ## check the data
             if (ref($config_data_ref->{$key}) eq 'ARRAY') {
 
                 if (scalar($config_data_ref->{$key}) == 0) {
-#                    error("Key '$key' has no data elements!");
                     $sts = error(ERR_NO_ELEMENTS, "Key '$key' has no data elements!", CONTINUE);
                 }
             }
@@ -480,21 +477,18 @@ sub mountDevice {
     foreach my $uuid (@{$uuids_ref}) {
         chomp(my $device = `blkid -U $uuid`);
 
-        if (defined($device)) {
+        if (defined($device) && $device) {
 
-            #push(@devices, $device);
             notify(2, "$device assigned to $uuid");
             $devices_ref->{$device}{'UUID'} = $uuid;
             push(@{$devices_ref->{'__ORDER__'}}, $device);
         } else {
-#            error("No device found for $uuid");
-            return error(ERR_NO_UUID_DEVICE, "No device found for $uuid", CONTINUE);
+            error(ERR_NO_UUID_DEVICE, "No device found for $uuid", CONTINUE);
         }
     }
 
     # check search results
-    if (scalar(@{$devices_ref->{'__ORDER__'}}) == 0) {
-#        error("No connected device assigned to the UUID!");
+    if (!%{$devices_ref} || scalar(@{$devices_ref->{'__ORDER__'}}) == 0) {
         return error(ERR_NO_DEVICE, "No connected device assigned to the UUID!", CONTINUE);
     }
 
@@ -529,8 +523,11 @@ sub mountDevice {
     } else {
         ## use first mount point
         my $device = $devices_ref->{'__ORDER__'}[0];
-        $sts = mountSingleDevice($device, $devices_ref);
+        if($device) {
+            $sts = mountSingleDevice($device, $devices_ref);
+        } else {
 
+        }
         if ($sts == 0) {
             ## a device for processing is found
             $process_devices->{'__ORDER__'} = [$device];
@@ -566,15 +563,11 @@ sub mountSingleDevice {
         my $typeinfo = `blkid $device`;
 
         if (!defined($typeinfo)) {
-#            error("no blkid data found!");
-#            $sts = ERR_PROGRAM_RETCODE;
             return error(ERR_PROGRAM_RETCODE, "no blkid data found!", CONTINUE);
         }
         my ($devtype) = $typeinfo =~ /TYPE = " (.+?) "/smx;
 
         if (!defined($devtype)) {
-#            error("no device type found!");
-#            $sts = ;
             return error(ERR_PROGRAM_RETCODE, "no device type found!", CONTINUE);
         }
         notify(3, "Drive type: $devtype");
@@ -582,7 +575,6 @@ sub mountSingleDevice {
 
         if ($retcode) {
             notify(2, "Mount return Code: $retcode");
-#            error("Mount process of device $device failed!");
             $sts = error(ERR_MOUNT, "Mount process of device $device failed!", CONTINUE);
         } else {
             ## copy device to hash result list
@@ -619,7 +611,6 @@ sub unmountDevice {
             my $retcode = system("umount $device");
 
             if ($retcode) {
-#                error("unmount of '$device' failed ($retcode)!");
                 $sts = error(ERR_UNMOUNT, "unmount of '$device' failed ($retcode)!", CONTINUE);
             } else {
                 remove_tree($devices_ref->{$device}{'mp'});
@@ -694,6 +685,7 @@ sub doBackupForDevice {
 
     # create target directory if it is not existing
     my $target = "$devices_ref->{$device}{'mp'}/$config_ref->{'rootdir'}/" . hostname();
+    $target =~ s/\/\//\//g;
 
     if (!-d $target) {
         notify(2, "Create the directory '$target' for backup. This is the first time to backup for the device.");
@@ -716,12 +708,12 @@ sub doBackupForDevice {
     # show execution data
     if ($g_options{'verbose'} >= 2) {
         my $tempfile = `cat $data_include`;
-        message("Content of temporary include file:\n$tempfile");
+        message("Content of temporary include file '$data_include':\n$tempfile");
         message("Backup command:\n  " . join(' ', @exec));
     }
 
     # execute the backup process
-    if ($g_options{'debug'} == 0) {
+    if ($g_options{'dry-run'} == 0) {
         $sts = system(@exec);                          # execute rdiff-backup
 
         if ($sts) {
@@ -783,8 +775,9 @@ sub doStatusForDevice {
     my $target = "$devices_ref->{$device}{'mp'}/$config_ref->{'rootdir'}/" . hostname();
 
     if (!-d $target) {
-        error(
-            "The target directory '$target' does not exists. It looks like that no backup to the device '$device' was never made."
+        $sts = error(
+            ERR_NO_TARGET_DIR,
+            "The target directory '$target' does not exists. It looks like that no backup to the device '$device' was made.", CONTINUE
         );
         return $sts;
     } else {
@@ -804,7 +797,7 @@ sub doStatusForDevice {
     notify(2, "Status command:\n  " . join(' ', @exec));
 
     # execute the backup process
-    if ($g_options{'debug'} == 0) {
+    if ($g_options{'dry-run'} == 0) {
         $sts = system(@exec);                          # execute rdiff-backup
 
         if ($sts) {
@@ -823,7 +816,7 @@ sub doStatusForDevice {
 
 sub doCleanup {
     ############################################################################
-    # Read the data of the addresed configuration file as a hash data list.
+    # Read the data of the addressed configuration file as a hash data list.
     # Param1:   reference to device that have to be processed.
     # Param1:   reference to the config data
     # Return:   -
@@ -866,10 +859,9 @@ sub doCleanupADevice {
     my $target = "$devices_ref->{$device}{'mp'}/$config_ref->{'rootdir'}/" . hostname();
 
     if (!-d $target) {
-#        error("The device '$device' has no target the directory '$target' for cleanup!");
         $sts = error(ERR_NO_TARGET_DIR, "The device '$device' has no target the directory '$target' for cleanup!", CONTINUE);
     } elsif(!defined($config_ref->{'cleanup'}) || $config_ref->{'cleanup'} eq '') {
-        error("Cleanup stopped, not time value 'cleanup=...' find in config file!");
+        error(ERR_MISSING_KEY, "Cleanup stopped, not time value 'cleanup=...' find in config file!");
         $sts = error(ERR_CONFFILE_BAD_DATA, "Cleanup stopped, not time value 'cleanup=...' find in config file!", CONTINUE);
     } else {
         notify(3, "Cleanup device '$device'");
@@ -895,8 +887,8 @@ sub doCleanupADevice {
 
 sub readConfigFile {
     ############################################################################
-    # Read the data of the addresed configuration file as a hash data list.
-    # Param1:   path name of the confiog file
+    # Read the data of the addressed configuration file as a hash data list.
+    # Param1:   path name of the config file
     # Param2:   reference to a result configuration data hash.
     # Return:   -
     ############################################################################
@@ -906,8 +898,9 @@ sub readConfigFile {
 
     # check config file
     if (!-f $filename) {
-#        error("config file '$filename' not found!");
-        return error(ERR_CONFFILE_NOT_FOUND, "config file '$filename' not found!", CONTINUE);
+        my $sts = error(ERR_CONFFILE_NOT_FOUND, "config file '$filename' not found!", CONTINUE, 'CONFIG-FILE');
+        createDummy( $filename );
+        exit $sts;
     }
 
     # load config file and add line number markers in front of each line
@@ -940,13 +933,12 @@ sub readConfigFile {
 
             foreach my $item (@values) {
                 $item =~ s/^ \d+ :: \s* //smx;           # remove leading line info
-                $item =~ s/^ \s* (.*?) \s* \n/$1/smx;    # remove leading and trailing whitespaces
+                $item =~ s/^ \s* (.*?) \s* \n/$1/smx;    # remove leading and trailing white spaces
             }
             notify(4, "($line) $key ->\n<" . join(">\n<", @values) . ">\n");
 
             # add block to hash list
             if (defined($block_ref->{$key})) {
-#                error("Double block key '$key' in line $line found!");
                 $sts = error(ERR_DOUBLE_BLOCK_KEY, "Double block key '$key' in line $line found!", CONTINUE);
             } else {
                 $block_ref->{$key} = \@values;
@@ -977,7 +969,6 @@ sub readConfigFile {
 
             # add block to hash list
             if (defined($block_ref->{$key})) {
-#                error("Double block key '$key' in line $line found!");
                 $sts = error(ERR_DOUBLE_BLOCK_KEY, "Double block key '$key' in line $line found!", CONTINUE);
             } else {
                 $block_ref->{$key} = $value;
@@ -1010,7 +1001,7 @@ sub readConfigFile {
 
 sub executeCommand {
     ############################################################################
-    # Executes a predefined command. Empty and undefines command element part
+    # Executes a predefined command. Empty and undefined command element part
     # will be removed before the command is executed.
     # Param1:   array with command elements
     # Return:   return code of execution
@@ -1023,7 +1014,7 @@ sub executeCommand {
 
 
     # execute the backup process
-    if ($g_options{'debug'} == 0) {
+    if ($g_options{'dry-run'} == 0) {
 
         # show execution data
         notify(2, "Execution command: " . join(' ', @cmd));
@@ -1045,6 +1036,175 @@ sub executeCommand {
     # output the information
     return $rc;
 } ## end sub executeCommand
+
+
+
+
+sub createDummy {
+    ############################################################################
+    # Write a dummy content of a configuration file.
+    # Param1:   expected file name
+    # Return:   -
+    ############################################################################
+    my ($file) = @_;
+
+    # ask user if a dummy file should be created
+    print "File $file not found.\nShould the file created? [y/N] ";
+    my $answer = <>;
+    $answer =~ s/\n//;      # remove newline
+
+    # skip function if no file is wanted
+    if($answer =~ / ^ N? $ /ismx) {
+        notify(2, "do not create a file");
+        return 0;
+    }
+
+    # get a list with all directories from root
+    my @dirs = grep { -d } glob "/*";
+    my $root_dir_list = '';
+    foreach my $dir (@dirs) {
+
+        my $exclude = ($dir eq '/etc') ? '+' : '-';
+
+        $root_dir_list .= "    ${exclude} ${dir}\n";
+    }
+
+    my $dummy_file = <<"EOT";
+#
+# $file
+#
+#
+
+
+#
+# UUIDs is a list of hard drive UUIDs that are used to define backup
+# devices. The UUIDs of the system can be listed by the command
+# blkid with root permissions.
+# The first listed and connected UUID is used if the
+# script option --all is not used.
+# One UUID per line is expected, the delimiter between the UUIDs
+# is a comma.
+#
+UUIDs = [
+    12345678-1111-2222-ab12-abcdef012345,       # highest priority
+    abcef123-0000-1111-ffff-9876543210ab,       # lowest priority
+] # use is UUID devices
+
+
+#
+# rootdir determines the target root name of the backup directory. This
+# directory will be expanded with the host name to the final target.
+#
+rootdir = /backups
+
+
+#
+# This defines the start source location of the host to start a backup
+# process.
+#
+backupat = /
+
+#
+# This key defines the list of exclude and include directories
+# related to the system root directory. See the manual page of
+# rdiff_backup for details.
+#
+select = [
+$root_dir_list
+]
+
+#
+# Additional options for rdiff-backup for backup.
+#
+optionsbackup = "--force -v 4"
+
+
+#
+# Additional options for rdiff-backup for restore.
+#
+optionsrestore = ""
+
+#
+# Additional options for rdiff-backup for status.
+#
+optionsstatus = ''
+
+#
+# Additional options for rdiff-backup for cleanup.
+#
+optionscleanup = ''
+
+#
+# This parameter is checked before the required devices will be filled
+# with backup data. If this parameter is found and an existing program
+# is found this program will be called before the mount process starts.
+#
+exec_before_backup = ''
+
+
+#
+# This parameter is checked before the selected devices will be filled
+# with backup data. If this parameter is found and an existing program
+# is found this program will be called after the unmount process starts.
+#
+exec_after_backup = ''
+
+
+#
+# The parameter cleanup defines the keeping time of old backup files. Files
+# that are older than the given value will be delöeted from the backup media.
+# After a successful backup execution the cleanup process will be triggered,
+# if this parameter is filled with data. Empty value will ignore the
+# clean-up process.
+# Supported values for this parameter descript at TIME FORMATS in the
+# rdiff-backup manual.
+#
+cleanup = '5W'
+EOT
+
+    # write file
+    writeFile($file, $dummy_file, 'root:root', '0777');
+    print("File '$file' created.\n");
+    return;
+}
+
+
+
+
+sub writeFile {
+    ############################################################################
+    #
+    # Param1:   path name
+    # Param2:   file content
+    # Param3:   file owner:group name
+    # Param4:   file permissions
+    # Return:   0
+    ############################################################################
+    my ($path, $content, $owner, $permssion) = @_;
+    $owner //= undef;
+    $permssion //= undef;
+
+    # create a missing d
+    my $dirname = dirname($path);
+    make_path($dirname);
+
+    # write file content
+    open( my $fh, '>', $path) or die($!);
+    print $fh $content;
+    close($fh);
+
+    # set owner if required
+    if(defined( $owner)) {
+        system("chown $owner $path");
+    }
+
+    # set permissions if required
+    if(defined( $permssion)) {
+        system("chmod $permssion $path");
+    }
+
+    return 0;
+}
 
 
 
@@ -1093,12 +1253,25 @@ sub message {
 sub warning {
     ############################################################################
     # Writes a text to the standard error device and adds a new line at the end.
-    # Param1:   text for display
-    # Return:   -
+    # Param1:   error number ID, for clear error identification
+    # Param2:   text for display
+    # Return:   resulted warning ID code
     ############################################################################
-    my ($text) = @_;
-    print STDERR "Warning: $text\n";
-    return;
+    my ($id, $text) = @_;
+
+    # check the ID code; get a alternative one if required
+    my $ID = $id;
+
+    if($ID <= OK && $ID >= LAST_ITEM) {
+        $text = "The used warning code '$id' is unknown\n$text";
+        $ID = int(ERR_WRONG_ERROR_ID);
+    }
+
+    # output the message
+    my $error_text = sprintf("Warning(%i) : %s", $ID, $text);
+    printf STDERR ("$error_text\n");
+
+    return $ID;
 }
 
 
@@ -1111,11 +1284,14 @@ sub error {
     # Param2:   text for display
     # Param3:   (optional [0]) if true, than the script will not exit; false
     #           will exit the script.
+    # Param4:   Defines the manual sections that have to the displayed.
     # Return:   -
     ############################################################################
-    my ($id, $text, $next) = @_;
-    $next //= 0;
+    my ($id, $text, $next, $sections) = @_;
+    $next //= STOP;
+    $sections //= undef;
 
+    # check the ID code; get a alternative one if required
     my $ID = $id;
 
     if($ID <= OK && $ID >= LAST_ITEM) {
@@ -1124,9 +1300,14 @@ sub error {
         $ID = int(ERR_WRONG_ERROR_ID);
     }
 
-#    print STDERR "ERROR : $text\n";
-    printf STDERR ("ERROR(%i) : %s\n", $ID, $text);
-    exit $ID if($next);
+    # output the message
+    my $error_text = sprintf("ERROR(%i) : %s", $ID, $text);
+
+    if($next == STOP) {
+        helpError( $error_text, $ID, $sections);
+    } else {
+        printf STDERR ("$error_text\n");
+    }
 
     # return a correct error ID
     return $ID;
@@ -1178,7 +1359,7 @@ sub helpMan {
 
 sub helpError {
     ############################################################################
-    # Displays a error meassage in front of a Synopsis section to the STDERR
+    # Displays a error message in front of a Synopsis section to the STDERR
     # device and stops the script  with the error code 0.
     # Param1:   Error text
     # Param2:   Optional: Error code
@@ -1187,11 +1368,20 @@ sub helpError {
     ############################################################################
     my $errortext = 'Error: ' . shift // 'Error detected - no details available!';
     my $errorcode = shift             // 1;
+    my $verbose   = 1;
+    my $sections  = shift;
+    if(defined($sections)) {
+        $verbose = 99;
+    } else {
+        $sections  = "NAME|SYNOPSIS|COMMAND|DESCRIPTION|VERSION";
+    }
+
     pod2usage(
         '-exitval' => $errorcode,
-        '-verbose' => 1,
+        '-verbose' => $verbose,
         '-message' => $errortext,
         '-output'  => \*STDERR,
+        '-sections'=> $sections,
     );
     return;    # dummy return for Perl::Critic
 }
@@ -1202,18 +1392,18 @@ __END__
 
 =head1 NAME
 
-store.pl - This script helps to backup or restore a Linux system to an
-external hard drive based on the tool rdiff_backup.
+store.pl - This script helps to backup or restore a Linux system to
+UUID marked hard drives using the tool rdiff-backup. If device not
+mounted that it will be done too.
 
 =head1 SYNOPSIS
 
- store.pl [backup] [-a|--all] [-c|--config CONFIG] [-v|--verbose LEVEL]
- store.pl restore [-c|--config CONFIG] [-v|--verbose LEVEL]
- store.pl status [-c|--config CONFIG] [-v|--verbose LEVEL]
+ store.pl [backup] [-a|--all] [-c|--config CONFIG] [-n|--dry-run] [-v|--verbose]
+ store.pl restore [-c|--config CONFIG] [-n|--dry-run] [-v|--verbose]
+ store.pl status [-c|--config CONFIG] [-v|--verbose]
  store.pl -h|--help
  store.pl --man
  store.pl --version
-
 
 
 =head2 COMMAND
@@ -1222,21 +1412,26 @@ The B<COMMAND> value is one of the following list:
 
 =over 4
 
-=item * B<backup>
+=item B<backup>
 
-This command forces the script to backup the system, related to
-the found configuration data.
+This command forces the script to backup the system, related to the
+found configuration data.
 
 Is command is the default value if command is omitted.
 
-=item * B<restore>
+=item B<restore>
 
 Restores data to the host.
 
-=item * B<status>
+=item B<cleanup>
 
-Informs about the current backup repository status on the
-target device(s).
+cleanup a rdiff-backup repository on a connected device or on
+multiple connected devices.
+
+=item B<status>
+
+Informs about the current backup repository status on the target
+device(s).
 
 =back
 
@@ -1251,20 +1446,26 @@ configuration file.
 
 =item B<-c  --config CONFIGFILE>
 
-Location of config file that has to be read and used for
-script processing.
+Location of config file that has to be read and used for script
+processing.
 
-Default file name is F<./docexp.conf>.
+Default file name is F</etc/store/backup.conf>.
 
-=item B<-v  --verbose LEVEL>
+=item B<-n  --dry-run>
 
-Defines the level of additional script outputs.
+This option disables the execution of rdiff-backup and is needed in
+combination with the option -v to debug and analyse the script.
 
-Default is 0 (= no additional outputs)
+=item B<-v  --verbose>
+
+Defines the level of additional script outputs. To increase the
+level to higher values that 1 use it multiple times. E.g. '-vvv'
+
+Default is no additional outputs.
 
 =item B<--version>
 
-Returns a text to the console withthe current script version number
+Returns a text to the console with the current script version number
 and the release date.
 
 =item B<--man>
@@ -1275,41 +1476,61 @@ Displays the full help text.
 
 =head1 DESCRIPTION
 
-This script helps to backup and restore a linux system to or from
-an external hard drive.
+This script helps to backup and restore a Linux system to or from an
+external hard drive. It will create a relation between one or
+multiple UUIDs of backup device(s) with the identified source path
+definition. The relation is defined in a configuration file. Usage
+of UUID allows the script to handle the mounting process
+automatically.
 
 
 =head2 Requirements
 
-rdiff_backup
+Following tools required to execute this script:
+
+=over 4
+
+=item C<awk>
+
+=item C<blkid>
+
+=item C<mktemp>
+
+=item C<mount>
+
+=item C<rdiff-backup>
+
+=back
 
 
 
-=head1 CONFIG FILE
+=head1 CONFIG-FILE
 
-There is a config file required to let the script know how to process
-the the backup and restore. The default name is B</etc/store/backup.conf>
+There is a config file required to let the script know how to
+process the the backup and restore. The default name is
+B</etc/store/backup.conf>
 
 If a config file is found, via the default name or by a command line
-name, this content will be used during the script execution. An existing
-script file will never modified be this file.
+name, this content will be used during the script execution. An
+existing script file will never modified be this file.
 
 =head2 Common Config File Infos
 
 =over 4
 
-=item * B<Empty line>
+=item B<Empty line>
 
-A line without characters or with whitespace characters
-will be ignored.
+A line without characters or with whitespace characters will be
+ignored.
 
-=item * B<Comment>
+=item B<Comment>
 
-The character '#' and following characters until end of line will
-be ignored. After the removement it will be checked if the line
-fulfills the condition of Empty Line Than the whole line will be ignored.
+The character '#' and following characters until end of line will be
+ignored. After the removement it will be checked if the line
+fulfills the condition of Empty Line Than the whole line will be
+ignored.
 
-=item * Data
+=item B<Data>
 
 There are different types of data formats supported:
 
@@ -1318,24 +1539,25 @@ There are different types of data formats supported:
 =item - B<Key = String>
 
 The key name starts in the first column of a line followed by the
-character sign '=' followed by a string value within the same line. The
-string value is filled with the list of first printable character until
-the last printable charcater on the line. Bording quotes will be
-removed to allow whitespace characters in the begin or end to
-the string.
+character sign '=' followed by a string value within the same line.
+The string value is filled with the list of first printable
+character until the last printable charcater on the line. Bording
+quotes will be removed to allow whitespace characters in the begin
+or end to the string.
 
-Line with an empty string can be created by using the quotes '' or ""
-without content.
+Line with an empty string can be created by using the quotes '' or
+"" without content.
 
 E.g. rootdir = /backups
 
 =item - B<Key = Array ([...])>
 
 The key name starts in the first column of a line followed by the
-character sign '=' followed by a opend square bracked. Each line until
-the next closing square backet will be filled into an array element.
-The string value is filled with the list of first printable character until
-the last printable charcater on each the line.
+character sign '=' followed by a opend square bracked. Each line
+until the next closing square backet will be filled into an array
+element.  The string value is filled with the list of first
+printable character until the last printable charcater on each the
+line.
 
  E.g. select = [
     - sys
@@ -1350,56 +1572,99 @@ the last printable charcater on each the line.
 
 =over 4
 
-=item * B<UUIDs>
-
-UUIDs is a data type of Key/Array. This parameter key must be listed.
+=item B<UUIDs>
 
 UUIDs is a list of hard drive UUIDs that are used to define backup
-devices. The UUIDs of the system can be listed by the command
-blkid with root permissions.
+devices. The UUIDs of the system can be listed by the command blkid
+with root permissions.
 
-The first listed and connected UUID is used if the
-script option --all is not used.
+UUIDs is a data type of Key/Array. This parameter key must be
+listed.
 
-One UUID per line is expected, the delimiter between the UUIDs
-is a comma.
+The first listed and connected UUID is used if the script option
+--all is not used.
 
-=item * B<rootdir>
+One UUID per line is expected, the delimiter between the UUIDs is a
+comma.
 
-rootdir is a data type of Key/String. This parameter key must be listed.
+Example:
 
-rootdir determines the target root name of the backup directory. This
-directory will be expanded with the host name to the final target.
+  UUIDs = [
+      12345678-1111-2222-ab12-abcdef012345,       # highest priority
+      ...
+      abcef123-0000-1111-ffff-9876543210ab,       # lowest priority
+  ] # use is UUID devices
 
-=item * B<backupat>
+=item B<rootdir>
 
-backupat is a data type of Key/Array. This parameter key must be listed.
+rootdir is a data type of Key/String. This parameter key must be
+listed.
+
+rootdir determines the target root name of the backup directory.
+This directory will be expanded with the host name to the final
+target.
+
+=item B<backupat>
 
 This defines the start source location of the host to start a backup
 process.
 
-=item * B<select>
+backupat is a data type of Key/Array. This parameter key must be
+listed.
+
+=item B<select>
 
 select is a data type of Key/Array. This parameter key must be listed.
 
-This key defines the list of exclude and include directories
-related to the system root directory. See the manual page of
-rdiff_backup for details.
+This key defines the list of exclude and include directories related
+to the system root directory. See the manual page of
+L<rdiff_backup|http://www.nongnu.org/rdiff-backup/rdiff-backup.1.html>
+for details especially for option B<--include-globbing-filelist>.
 
-=item * B<optionsbackup>
+=over 8
+
+=item B<?>
+
+expands to any character except "/"
+
+=item B<*>
+
+can be expanded to any string of characters not containing "/"
+
+=item B<**>
+
+expands to any string of characters whether or not it contains "/"
+
+=item B<[...]>
+
+expands to a single character of those characters specified
+
+=back
+
+I<Broad rule> for selecting/deselecting directories
+
+Enable/Disable special directories first and than deselect/select
+parent directory. For example if the content of /usr/local/bin has
+to be stored but all other files/directories in /usr should be
+ignored then use
+
+  + /usr/local/bin
+  - /usr
+
+=item B<optionsbackup>
 
 optionsbackup is a data type of Key/String.
 
 Additional options for rdiff-backup for backup.
 
-=item * B<optionsrestore>
+=item B<optionsrestore>
 
 optionsrestore is a data type of Key/String.
 
 Additional options for rdiff-backup for restore.
 
 
-=item * B<exec_before_backup>
+=item B<exec_before_backup>
 
 exec_before_backup is a data type of Key/String.
 
@@ -1407,28 +1672,180 @@ This parameter is checked before the required devices will be filled
 with backup data. If this parameter is found and an existing program
 is found this program will be called before the mount process starts.
 
-=item * B<exec_after_backup>
+=item B<exec_after_backup>
 
 exec_after_backup is a data type of Key/String.
 
 This parameter is checked before the selected devices will be filled
 with backup data. If this parameter is found and an existing program
-is found this program will be called after the unmount process starts.
+is found this program will be called after the unmount process
+starts.
 
-=item * B<cleanup>
+=item B<cleanup>
 
 cleanup is a data type of Key/String.
 
-The parameter cleanup defines the keeping time of old backup files. Files
-that are older than the given value will be deleted from the backup media.
-After a successful backup execution the cleanup process will be triggered,
-if this parameter is filled with data. Empty value will ignore the
-clean-up process.
+The parameter cleanup defines the keeping time of old backup files.
+Files that are older than the given value will be deleted from the
+backup media.  After a successful backup execution the cleanup
+process will be triggered, if this parameter is filled with data.
+Empty value will ignore the clean-up process.
 
 Supported values for this parameter descript at TIME FORMATS in the
 rdiff-backup manual.
 
 =back
+
+=head2 Config Example
+
+Here is an example of a backup configuration file.
+
+  #
+  # /etc/store/backup.conf
+  #
+  #
+
+
+  #
+  # UUIDs is a list of hard drive UUIDs that are used to define backup
+  # devices. The UUIDs of the system can be listed by the command
+  # blkid with root permissions.
+  # The first listed and connected UUID is used if the
+  # script option --all is not used.
+  # One UUID per line is expected, the delimiter between the UUIDs
+  # is a comma.
+  #
+  UUIDs = [
+      84940d39-5633-497f-ab47-81ad90baba23,       # highest priority
+      a3a3ccf0-b513-4da4-a4f0-22f34218d3ac,       # lowest priority
+  ] # use is UUID devices
+
+
+  #
+  # rootdir determines the target root name of the backup directory. This
+  # directory will be expanded with the host name to the final target.
+  #
+  rootdir = /backups
+
+
+  #
+  # This defines the start source location of the host to start a backup
+  # process.
+  #
+  backupat = /
+
+  #
+  # This key defines the list of exclude and include directories
+  # related to the system root directory. See the manual page of
+  # rdiff_backup for details.
+  #
+  select = [
+      - /home/*/public  # ignore this
+      - /home/*/user    # ignore this
+      + /home           # add the rest of /home
+      - /dev
+      + /etc
+      - /opt
+      - /run
+      - /sys
+      + /usr/local      # add this directory
+      - /usr            # ignore the rest
+  ]
+
+  #
+  # Additional options for rdiff-backup for backup.
+  #
+  optionsbackup = "--force -v 4"
+
+
+  #
+  # Additional options for rdiff-backup for restore.
+  #
+  optionsrestore = ""
+
+  #
+  # Additional options for rdiff-backup for status.
+  #
+  optionsstatus = ''
+
+  #
+  # Additional options for rdiff-backup for cleanup.
+  #
+  optionscleanup = ''
+
+  #
+  # This parameter is checked before the required devices will be filled
+  # with backup data. If this parameter is found and an existing program
+  # is found this program will be called before the mount process starts.
+  #
+  exec_before_backup = ''
+
+
+  #
+  # This parameter is checked before the selected devices will be filled
+  # with backup data. If this parameter is found and an existing program
+  # is found this program will be called after the unmount process starts.
+  #
+  exec_after_backup = ''
+
+
+  #
+  # The parameter cleanup defines the keeping time of old backup files. Files
+  # that are older than the given value will be deleted from the backup media.
+  # After a successful backup execution the cleanup process will be triggered,
+  # if this parameter is filled with data. Empty value will ignore the
+  # clean-up process.
+  # Supported values for this parameter descript at TIME FORMATS in the
+  # rdiff-backup manual.
+  #
+
+
+=head1 BACKUP PREPARATION
+
+Following are the next steps to prepare a configuration file for a
+backup session.
+
+=over 4
+
+=item B<Step 1>
+
+    Connect one or multiple devices where to backup has to be
+    located. It would be helpful to name the disks. This make the
+    identification easier. This can be done by using tools like
+    e2label, mlabel, xfs_admin or others
+
+=item B<Step 2>
+
+    Get the UUIDs of the required devices:
+
+    C<$ blkid>
+
+    Take the required UUID from the required device and add it to
+    the config file to the list of UUIDs.
+
+=item B<Step 3>
+
+    Select the start directory name for the key I<backupat>. This
+    name will be the start directory. In this directory you will
+    find after a backup session the host names with there backup
+    content.
+
+    If the device label name is 'bak_System', the content of the
+    I<backupat> is 'backup' and the host name is alegro than the
+    backup data are stored in F<bak_System:backup/alegro/>
+
+=item B<Step 4>
+
+    Define the list with directories for the key B<select>.
+
+=item B<Step a>
+
+    Start a test run with a limited list of directories to check if
+    the device is mounted correctly, all directories will be created
+    and data are stored.
+
+=back
+
 
 =head1 EXAMPLES
 
@@ -1436,14 +1853,14 @@ rdiff-backup manual.
 
   store.pl  or store.pl backup
 
-Backups the current hosts defined by the configuration file search in
-/etc/store/backup.conf to the defined devices.
+Backups the current hosts defined by the configuration file search
+in /etc/store/backup.conf to the defined devices.
 
 
   store.pl  restore
 
-Restores the current host defined by the configuration file search in
-/etc/store/backup.conf from the defined and first found device.
+Restores the current host defined by the configuration file search
+in /etc/store/backup.conf from the defined and first found device.
 
 =head1 AUTHOR
 
@@ -1457,9 +1874,9 @@ No bugs have been reported.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2015 Heiko Klausing. All rights reserved. This program is
-free software; you can redistribute it and/or modify it under the same terms
-as Perl itself.
+Copyright (c) 2015 Heiko Klausing. All rights reserved. This program
+is free software; you can redistribute it and/or modify it under the
+same terms as Perl itself.
 
 Author can be reached at h dot klausing at gmx dot de
 
