@@ -2,7 +2,7 @@ Build.PL
 Changes
 INSTALL
 MANIFEST			This list of files
-README
+README.md
 script/store.pl
 t/boilerplate.t
 t/manifest.t

@@ -35,7 +35,6 @@
 #
 #
 #
-#
 use strict;
 use warnings;
 #
@@ -46,14 +45,15 @@ use feature qw( state );
 use Getopt::Long;
 use File::Basename;
 use File::Path qw(remove_tree make_path);
+use File::Temp qw(:mktemp);
 use Pod::Usage;
 use Sys::Hostname;
 #
 #
 #
 #--- constants -------------------------
-my $VERSION     = '0.001';                        # major and minor releases, and sub-minor
-my $RELEASEDATE = '2015-12-13';
+my $VERSION     = '0.010';                        # major and minor releases, and sub-minor
+my $RELEASEDATE = '2015-12-23';
 my $SCRIPTNAME  = File::Basename::basename($0);
 my $SCRIPTDIR   = File::Basename::dirname($0);
 my $WORKINGDIR  = $ENV{'PWD'} // glob('~');
@@ -117,7 +117,6 @@ sub main {
         'useall'  => 0,
         'config'  => '/etc/store/backup.conf',
         'dry-run' => 0,
-        'select'  => undef,             # select UUID (first character will be compared)
         'verbose' => 1,                 # verbose level number
         'command' => 'backup',          # user selected command, default is backup.
         'no-root' => 0,                 # =1 if script execution should be started without root permissions
@@ -130,7 +129,6 @@ sub main {
         'man'         => sub {helpMan('man');},
         'n|dry-run'   => \$g_options{'dry-run'},
         'no-root'     => \$g_options{'no-root'},
-        's|select=s'  => \$g_options{'select'},
         'v|verbose'   => sub{ $g_options{'verbose'}++; },
         'version'     => sub {version();},
     );
@@ -397,12 +395,14 @@ sub checkRequiredToolsExisting {
 
         for my $path (split /:/, $ENV{'PATH'}) {
             my $progpath = "$path/$tool_name";
-            notify(3, "Search '$progpath'");
+            notify(3, "Search '$progpath'", 1);
 
             if (-f $progpath && -x $progpath) {
-                notify(3, "$tool_name found in $path");
+                notify(3, " - $tool_name found - OK");
                 $tool_path = $progpath;
                 last;
+            } else {
+                notify(3, " - not found");
             }
         }
 
@@ -677,8 +677,7 @@ sub doBackupForDevice {
     notify(3, "Backup to a single device '$device'");
 
     # create a temporary data-include file
-    #my $data_include = "/tmp/rdiff_backup.incl";
-    my $data_include = "rdiff_backup.incl";
+    my $data_include = mktemp('rdiff_backup.incl.XXXXXX');
     open(my $fh, '>', $data_include) or croak("File creation of '$data_include' failed\n$!");
     print $fh join("\n", @{$config_ref->{'select'}}) . "\n";
     close($fh);
@@ -699,7 +698,7 @@ sub doBackupForDevice {
         '/usr/bin/rdiff-backup',                    # backup program
         split(' ', $config_ref->{'optionsbackup'}), # options from config file
         "--include-globbing-filelist",              # temporary include file
-        "$data_include",                            # temporary include file
+        $data_include,                              # temporary include file
         $config_ref->{'backupat'},                  # source directory
         $target,                                    # target directory
     );
@@ -900,7 +899,8 @@ sub readConfigFile {
     if (!-f $filename) {
         my $sts = error(ERR_CONFFILE_NOT_FOUND, "config file '$filename' not found!", CONTINUE, 'CONFIG-FILE');
         createDummy( $filename );
-        exit $sts;
+#        exit $sts;
+        return $sts;
     }
 
     # load config file and add line number markers in front of each line
@@ -1163,7 +1163,9 @@ cleanup = '5W'
 EOT
 
     # write file
-    writeFile($file, $dummy_file, 'root:root', '0777');
+    my $user = $ENV{'SUDO_USER'} // $ENV{'USERNAME'} // 'root';
+    my $group = $ENV{'SUDO_USER'} // $ENV{'USERNAME'} // 'root';
+    writeFile($file, $dummy_file, "${user}:${group}", '0664');
     print("File '$file' created.\n");
     return;
 }
@@ -1220,7 +1222,9 @@ sub notify {
     # Return:   -
     ############################################################################
     my ($level, $text, $lineend) = @_;
+    # return if verbose level is to low
     return if ($level > $g_options{'verbose'});
+    # handle scalar and array data
     my $outText = (ref($text) eq 'ARRAY') ? join("\n", @$text) : $text;
     $outText =~ s/ [\/\\]{2,} /\//smxg;
 
@@ -1401,6 +1405,7 @@ mounted that it will be done too.
  store.pl [backup] [-a|--all] [-c|--config CONFIG] [-n|--dry-run] [-v|--verbose]
  store.pl restore [-c|--config CONFIG] [-n|--dry-run] [-v|--verbose]
  store.pl status [-c|--config CONFIG] [-v|--verbose]
+ store.pl cleanup [-c|--config CONFIG] [-v|--verbose]
  store.pl -h|--help
  store.pl --man
  store.pl --version

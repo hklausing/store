@@ -5,7 +5,7 @@ use warnings FATAL => 'all';
 use Test::More;
 plan tests => 4;
 
-
+my $version_number = '1.010';
 
 
 sub not_in_file_ok {
@@ -84,13 +84,13 @@ sub module_boilerplate_ok {
     );
     in_file_ok(
         $module => 'script version number' => qr/^ our \s+ \$VERSION \s+ = \s+ '0\.001';/x, # search txt: our $VERSION = '0.001';
-        'comment script version' => qr/# \s+ \d{4}-\d{2}-\d{2} \s+ v0.001 \s+ Heiko Klausing/x,
+        'comment script version' => qr/# \s+ \d{4}-\d{2}-\d{2} \s+ v${version_number} \s+ Heiko Klausing/x,
     );
 }
 TODO: {
     local $TODO = "Need to replace/add the boilerplate text";
     not_in_file_ok(
-        'README'                     => "The README is used..." => qr/The README is used/,
+        'README.md'                 => "The README is used..." => qr/The README is used/,
         "'version information here'" => qr/to provide version information/,
     );
     not_in_file_ok('Changes' => "placeholder date/time" => qr(Date/time));

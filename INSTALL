@@ -9,7 +9,7 @@ Directory/file list
 ├── INSTALL
 ├── lib/
 ├── MANIFEST
-├── README
+├── README.md
 ├── script/
 │   └── store.pl*
 └── t/
@@ -37,8 +37,8 @@ and directories committed.
 
 
 
-Install project package
------------------------
+Install project package (Version 1)
+-----------------------------------
 
 Install package of project 'store' with tarball file. Do these steps:
 
@@ -48,4 +48,13 @@ Install package of project 'store' with tarball file. Do these steps:
 4.  $ perl Build
 5.  $ perl Build test
 6.  $ sudo perl Build install
+
+
+
+Install tarball file (Version 2)
+--------------------------------
+
+Install the tarball to system by using the tool cpanminus:
+
+1.  $ sudo cpanm store-<version>.tar.gz
 
